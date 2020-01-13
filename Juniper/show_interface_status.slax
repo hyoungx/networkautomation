@@ -1,0 +1,156 @@
+/*
+ *  show_interface_status.slax
+ *
+ *  Created by Todd Okolowicz (tokolowicz@juniper.net) on 20090713.
+ *  Copyright (c) 2011 Juniper Networks. All rights reserved.
+ *
+ *  Version History
+ *  ===============
+ *  v0.1    Initial release (by Todd Okolowicz)
+ *  v0.2    Modified to include vlans on a given port and whether
+ *          or not it was trunked (by Robery Lemm)
+ *  v0.3    Modified as simple version (by Benn)
+ *
+ */
+
+version 1.0;
+ 
+ns junos = "http://xml.juniper.net/junos/*/junos";
+ns xnm = "http://xml.juniper.net/xnm/1.1/xnm";
+ns jcs = "http://xml.juniper.net/junos/commit-scripts/1.0";
+ 
+import "../import/junos.xsl";
+
+/* This is imported into JUNOS as a CLI option */ 
+var $arguments = { 
+    <argument> { 
+    <name> "interface"; 
+        <description> "Name of logical interface (e.g. ge-0/0/0.0)"; 
+    } 
+} 
+ 
+/* Command-line argument */ 
+param $interface; 
+
+match / {
+    <op-script-results> {
+        /* Send JUNOS XML API Element via jcs:invoke */
+        var $command-rpc1 = <command> "show interfaces media";
+        var $results1 = jcs:invoke( $command-rpc1 );
+ 
+        /* Send JUNOS XML API Element via jcs:invoke */
+        var $results2 = jcs:invoke( "get-ethernet-switching-interface-information" );
+
+        /* Send JUNOS XML API Element via jcs:invoke */
+        var $command-rpc3 = <command> "show interfaces brief";
+        var $results3 = jcs:invoke( $command-rpc3 );
+
+       /* This is a functional code block that uses a regular
+        * expression to check the interface cli option for correct syntax. I 
+        * disabled it and opted for the code block below. The regex is a 
+        * hard-coded and does not account for all possible hardware 
+        * configurations (i.e. EX3200 vs. EX4200, uplink vs. no uplink, 1GbE
+        * or 10GbE uplink, Virtual Chassis or stand-alone, etc.) It is more
+        * accurate to compare the cli input vs. the list of Ethernet switching
+        * interfaces actually enabled in the system. I left the regex code block
+        * in for code re-use in future scripts and learning purposes.
+
+        * Error check for incorrect interface syntax using a regex. 
+          if ( not ( jcs:empty ( $interface ) ) and jcs:empty ( jcs:regex ( "[xg]e-[0-9]/[0-1]/(([0-9])|([1-3][0-9])|(4[0-7])).0", $interface ) ) ) {
+              <xsl:message terminate="yes"> "The interface " _ $interface _ " isn't valid.\nUsage example: op show_interface_status interface ge-0/0/0.0";
+          }
+        */
+    
+        var $matching-interface = $results1/physical-interface [ name == $interface ];
+        if( not ( jcs:empty ($interface ) ) and jcs:empty ( $matching-interface ) ) {
+            <xsl:message terminate="yes"> "The interface " _ $interface _ " isn't valid.\nUsage example: op show_interface_status interface ge-0/0/0";
+        }
+
+        /* check whether the system is ELS or not */
+        mvar $isELS;
+        var $processes = jcs:invoke( <command> "show system processes");
+        if ( contains($processes/multi-routing-engine-item/output,"l2ald") ) {
+            set $isELS = true();
+        }
+        else {
+            set $isELS = false();
+        }
+
+        /* Create node list based on location path, loop through each node */
+        <output> jcs:printf("%-13s%-26s%-13s%-13s%-9s%-13s%-17s", "Interface", "Description", "Status", "VLAN", "Speed", "Duplex", "MediaType");
+        for-each ( $results1/physical-interface [ (string-length($interface)==0 or name=$interface) and if-config-flags/internal-flags == "0x0" ]) {
+
+            var $interface-name = name;
+            mvar $description;
+            if (jcs:empty(description)) {
+                set $description = " ";
+            }
+            else {
+                set $description = substring(description,1,24);
+            }
+
+            mvar $status;
+            if (admin-status == "up") {
+                set $status = oper-status;
+            }
+            else {
+                set $status = "Disabled";
+            }
+
+            mvar $vlans;
+            mvar $tagness;
+            mvar $vlanid;
+            if ( $isELS ) {
+                var $curr_l2_interface = $results2/l2ng-l2ald-iff-interface-entry/descendant-or-self::*[ substring-before(l2iff-interface-name,".") == $interface-name ];
+                set $tagness = $curr_l2_interface/l2iff-interface-vlan-member-tagness;
+                set $vlanid = $curr_l2_interface/following-sibling::*[1]/l2iff-interface-vlan-id;
+            }
+            else {
+                var $curr_l2_interface = $results2/interface[ substring-before(interface-name,".") == $interface-name ];
+                set $tagness = $curr_l2_interface/interface-vlan-member-list/interface-vlan-member[position()==1]/interface-vlan-member-tagness;
+                set $vlanid = $curr_l2_interface/interface-vlan-member-list/interface-vlan-member[position()==1]/interface-vlan-member-tagid;
+                if (jcs:empty($vlanid)) {
+                    set $vlanid = "default";
+                }
+            }
+            var $family = $results3/physical-interface[name == $interface-name]/logical-interface/address-family/address-family-name;
+            if (jcs:empty($family)) {
+                set $vlans = "No-Config";
+            }
+            else if ( $family == "eth-switch" ) {
+                if ( $tagness == "tagged" ) {
+                    set $vlans = "Trunk";
+                }
+                else {
+                    set $vlans = $vlanid;
+                }
+            }
+            else {
+                set $vlans = $family;
+            }
+
+            mvar $speed;
+            mvar $duplex;
+            if (if-auto-negotiation == "enabled") {
+                if (boolean(ethernet-autonegotiation/local-info)) {
+                    set $speed = "A-" _ substring-before(ethernet-autonegotiation/local-info/local-link-speed," ");
+                    set $duplex = "A-" _ substring-before(ethernet-autonegotiation/local-info/local-link-duplexity,"-");
+                }
+                else {
+                    set $speed = "Auto";
+                    set $duplex = "Auto";
+                }
+            }
+            else if (if-auto-negotiation == "disabled") {
+                set $speed = substring(speed,1,string-length(speed)-4);
+                if (contains(duplex,"plex")) {
+                    set $duplex = substring-before(duplex,"-");
+                }
+                else {
+                    set $duplex = substring(duplex,1,12);
+                }
+            }
+            <output> jcs:printf("%-13s%-26s%-13s%-13s%-9s%-13s%-17s", $interface-name, $description, $status, $vlans, $speed, $duplex, if-media-type );
+        }
+    }
+}

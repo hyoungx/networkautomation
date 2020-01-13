@@ -1,0 +1,293 @@
+/*
+ *  show_error_counters.slax
+ *
+ *  Created by Benn (hyoungx@gmail.com) on 2020-01-11
+ *  There are many similar scripts already. It is inspired by them.
+ *
+ *  Version History
+ *  ===============
+ *  v0.1    Initial release
+ *
+ */
+
+version 1.0;
+ 
+ns junos = "http://xml.juniper.net/junos/*/junos";
+ns xnm = "http://xml.juniper.net/xnm/1.1/xnm";
+ns jcs = "http://xml.juniper.net/junos/commit-scripts/1.0";
+ 
+import "../import/junos.xsl";
+
+/* This is imported into JUNOS as a CLI option */ 
+var $arguments = { 
+    <argument> { 
+        <name> "interface"; 
+        <description> "Name of logical interface (e.g. ge-0/0/0)"; 
+    }
+    <argument> { 
+        <name> "nonzero"; 
+        <description> "specify 1 to display non-zero counters only ( 0 or 1 )";
+    }
+    <argument> { 
+        <name> "description"; 
+        <description> "specify 1 to display description of interface ( 0 or 1 )"; 
+    }
+    <argument> { 
+        <name> "include-internals"; 
+        <description> "specify 1 to display counters of internal interfaces also ( 0 or 1 )";
+    }
+}
+
+/* Command-line argument */ 
+param $interface;
+param $nonzero = 1;
+param $description = 0;
+param $include-internals = 0;
+
+match / {
+    <op-script-results> {
+        /* Send JUNOS XML API Element via jcs:invoke */
+        var $command-rpc1 = <command> "show interfaces extensive";
+        var $results1 = jcs:invoke( $command-rpc1 );
+
+        var $matching-interface = $results1/physical-interface [ name == $interface ];
+        if( not ( jcs:empty($interface) ) and jcs:empty( $matching-interface ) ) {
+            <xsl:message terminate="yes"> "The interface " _ $interface _ " isn't valid.";
+        }
+
+        if ( string-length($interface)==0 ) {
+            var $include-internals = 1;
+        }
+
+        mvar $existErr;
+
+        /* Create node list based on location path, loop through each node */
+        <output> jcs:printf("%-15s%-8s%-8s%-8s%-8s%-8s%-8s%-8s%-8s%-8s%-8s", "In-If", "Error", "Drop", "Framing", "Runt", "PolcDis", "L2Incom", "L2chnnl", "mismath", "FIFOErr", "Resrc");
+        <output> "------------------------------------------------------------------------------------------";
+        <output> jcs:printf("%-15s%-8s%-8s%-8s%-8s%-8s%-8s%-8s%-8s%-8s", "Out-If","Carrier","Error","Drop","Collisn","AgedPkt","FIFOErr","HS-CRC","MTU-Err","Resrc");
+        for-each ( $results1/physical-interface [ (string-length($interface)==0 or name=$interface) and ( boolean(if-config-flags/internal-flags == "0x0") or boolean($include-internals) )]) {
+
+            var $interface-name = name;
+
+            var $interface-description = {
+                if ($description==0 or jcs:empty(description)) {
+                    expr "";
+                }
+                else {
+                    expr description;
+                }
+            }
+
+            var $totalInErr = {
+                mvar $sum=0;
+                for-each (input-error-list/child::*) {
+                    set $sum = $sum + current();
+                }
+                expr $sum;
+            }
+            var $input-errors = { 
+                if (jcs:empty(input-error-list/input-errors)) {
+                    expr "-";
+                }
+                else {
+                    expr input-error-list/input-errors;
+                }
+            }
+            var $input-drops = { 
+                if (jcs:empty(input-error-list/input-drops)) {
+                    expr "-";
+                }
+                else {
+                    expr input-error-list/input-drops;
+                }
+            }
+            var $framing-errors = { 
+                if (jcs:empty(input-error-list/framing-errors)) {
+                    expr "-";
+                }
+                else {
+                    expr input-error-list/framing-errors;
+                }
+            }
+            var $input-runts = { 
+                if (jcs:empty(input-error-list/input-runts)) {
+                    expr "-";
+                }
+                else {
+                    expr input-error-list/input-runts;
+                }
+            }
+            var $input-discards = { 
+                if (jcs:empty(input-error-list/input-discards)) {
+                    expr "-";
+                }
+                else {
+                    expr input-error-list/input-discards;
+                }
+            }
+            var $input-l3-incompletes = { 
+                if (jcs:empty(input-error-list/input-l3-incompletes)) {
+                    expr "-";
+                }
+                else {
+                    expr input-error-list/input-l3-incompletes;
+                }
+            }
+            var $input-l2-channel-errors = { 
+                if (jcs:empty(input-error-list/input-l2-channel-errors)) {
+                    expr "-";
+                }
+                else {
+                    expr input-error-list/input-l2-channel-errors;
+                }
+            }
+            var $input-l2-mismatch-timeouts = { 
+                if (jcs:empty(input-error-list/input-l2-mismatch-timeouts)) {
+                    expr "-";
+                }
+                else {
+                    expr input-error-list/input-l2-mismatch-timeouts;
+                }
+            }
+            var $input-fifo-errors = { 
+                if (jcs:empty(input-error-list/input-fifo-errors)) {
+                    expr "-";
+                }
+                else {
+                    expr input-error-list/input-fifo-errors;
+                }
+            }
+            var $input-resource-errors = { 
+                if (jcs:empty(input-error-list/input-resource-errors)) {
+                    expr "-";
+                }
+                else {
+                    expr input-error-list/input-resource-errors;
+                }
+            }
+            if ($totalInErr != 0) {
+                set $existErr = true();
+            }
+
+            var $totalOutErr = {
+                mvar $sum=0;
+                for-each (output-error-list/child::*) {
+                    set $sum = $sum + current();
+                }
+                expr $sum;
+            }
+            var $carrier-transitions = {
+                if (jcs:empty(output-error-list/carrier-transitions)) {
+                    expr "-";
+                }
+                else if (output-error-list/carrier-transitions > 999999 ){
+                    expr "999999+";
+                }
+                else {
+                    expr output-error-list/carrier-transitions;
+                }
+            }
+            var $output-errors = {
+                if (jcs:empty(output-error-list/output-errors)) {
+                    expr "-";
+                }
+                else if (output-error-list/output-errors > 999999 ){
+                    expr "999999+";
+                }
+                else {
+                    expr output-error-list/output-errors;
+                }
+            }
+            var $output-collisions = {
+                if (jcs:empty(output-error-list/output-collisions)) {
+                    expr "-";
+                }
+                else if (output-error-list/output-collisions > 999999 ){
+                    expr "999999+";
+                }
+                else {
+                    expr output-error-list/output-collisions;
+                }
+            }
+            var $output-drops = {
+                if (jcs:empty(output-error-list/output-drops)) {
+                    expr "-";
+                }
+                else if (output-error-list/output-drops > 999999 ){
+                    expr "999999+";
+                }
+                else {
+                    expr output-error-list/output-drops;
+                }
+            }
+            var $aged-packets = {
+                if (jcs:empty(output-error-list/aged-packets)) {
+                    expr "-";
+                }
+                else if (output-error-list/aged-packets > 999999 ){
+                    expr "999999+";
+                }
+                else {
+                    expr output-error-list/aged-packets;
+                }
+            }
+            var $mtu-errors = {
+                if (jcs:empty(output-error-list/mtu-errors)) {
+                    expr "-";
+                }
+                else if (output-error-list/mtu-errors > 999999 ){
+                    expr "999999+";
+                }
+                else {
+                    expr output-error-list/mtu-errors;
+                }
+            }
+            var $hs-link-crc-errors = {
+                if (jcs:empty(output-error-list/hs-link-crc-errors)) {
+                    expr "-";
+                }
+                else if (output-error-list/hs-link-crc-errors > 999999 ){
+                    expr "999999+";
+                }
+                else {
+                    expr output-error-list/hs-link-crc-errors;
+                }
+            }
+            var $output-fifo-errors = {
+                if (jcs:empty(output-error-list/output-fifo-errors)) {
+                    expr "-";
+                }
+                else if (output-error-list/output-fifo-errors > 999999 ){
+                    expr "999999+";
+                }
+                else {
+                    expr output-error-list/output-fifo-errors;
+                }
+            }
+            var $output-resource-errors = {
+                if (jcs:empty(output-error-list/output-resource-errors)) {
+                    expr "-";
+                }
+                else if (output-error-list/output-resource-errors > 999999 ){
+                    expr "999999+";
+                }
+                else {
+                    expr output-error-list/output-resource-errors;
+                }
+            }
+            if ($totalOutErr !=0) {
+                set $existErr = true();
+            }
+
+            if (($totalInErr != 0) or ($nonzero == 0) ) {
+                <output> jcs:printf("%-15s%-8s%-8s%-8s%-8s%-8s%-8s%-8s%-8s%-8s%-8s%-21s", " In-"_$interface-name, $input-errors, $input-drops, $framing-errors, $input-runts, $input-discards, $input-l3-incompletes, $input-l2-channel-errors, $input-l2-mismatch-timeouts, $input-fifo-errors, $input-resource-errors, substring($interface-description,1,20) );
+            }
+            if (($totalOutErr != 0) or ($nonzero == 0) ) {
+                <output> jcs:printf("%-15s%-8s%-8s%-8s%-8s%-8s%-8s%-8s%-8s%-8s%-8s%-21s", "Out-"_$interface-name, $carrier-transitions, $output-errors, $output-collisions, $output-drops, $aged-packets, $mtu-errors, $hs-link-crc-errors, $output-fifo-errors, $output-resource-errors, "        " _ substring($interface-description,1,20) );
+            }
+        }
+        if (not($existErr)) {
+            <output> "There is no Errors!!";
+        }
+    }
+}
